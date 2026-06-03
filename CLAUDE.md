@@ -34,6 +34,7 @@ tests/
 - `_SINGLE_RESPONSE_PREFIXES` use `_query()` (blocks waiting for response). `_MULTI_RESPONSE_PREFIXES` use fire-and-forget + sleep.
 - Video/rec select: `SOURCE` response maps to `None` state. Separate `cancel_*` methods for sending SOURCE command.
 - `probe_sources()` uses `_send_and_wait()` to try each `InputSource`, restores original at end.
+- `power_standby()` on any player follows up with `_standby_if_idle()`: if the chassis is still powered but no zone remains active, it sends `PWSTANDBY`. The just-turned-off player is treated as off (its event echo is async). Fixes models like the AVR-2308 that stay powered when only a secondary zone was on.
 - Module-level constants `MULTI_RESPONSE_DELAY`, `PROBE_TIMEOUT` are overridden in `tests/conftest.py` for speed.
 
 ## Testing

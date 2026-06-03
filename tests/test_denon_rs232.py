@@ -639,6 +639,78 @@ async def test_zone3_set_volume(receiver, mock_serial):
     assert b"Z370\r" in mock_serial.written_data
 
 
+# -- Auto system-standby when the last active zone is turned off --
+
+
+async def test_zone2_standby_powers_off_idle_receiver(receiver, mock_serial):
+    """Turning off the only active zone should standby the whole receiver.
+
+    Models such as the AVR-2308 keep the chassis powered when only Zone 2
+    was switched on, so Z2OFF alone leaves the unit running.
+    """
+    # Only Zone 2 active: main off, chassis still on.
+    mock_serial.inject_response("ZMOFF")
+    mock_serial.inject_response("Z2ON")
+    await asyncio.sleep(0.05)
+    mock_serial.written_data.clear()
+
+    await receiver.zone_2.power_standby()
+
+    assert b"Z2OFF\r" in mock_serial.written_data
+    assert b"PWSTANDBY\r" in mock_serial.written_data
+
+
+async def test_zone2_standby_keeps_receiver_on_when_main_active(receiver, mock_serial):
+    """Turning off Zone 2 must not standby the unit while the main zone is on."""
+    # Fixture leaves the main zone on; bring Zone 2 up too.
+    mock_serial.inject_response("Z2ON")
+    await asyncio.sleep(0.05)
+    mock_serial.written_data.clear()
+
+    await receiver.zone_2.power_standby()
+
+    assert b"Z2OFF\r" in mock_serial.written_data
+    assert b"PWSTANDBY\r" not in mock_serial.written_data
+
+
+async def test_zone2_standby_keeps_receiver_on_when_zone3_active(receiver, mock_serial):
+    """Another active zone keeps the receiver powered."""
+    mock_serial.inject_response("ZMOFF")
+    mock_serial.inject_response("Z2ON")
+    mock_serial.inject_response("Z3ON")
+    await asyncio.sleep(0.05)
+    mock_serial.written_data.clear()
+
+    await receiver.zone_2.power_standby()
+
+    assert b"Z2OFF\r" in mock_serial.written_data
+    assert b"PWSTANDBY\r" not in mock_serial.written_data
+
+
+async def test_main_standby_powers_off_idle_receiver(receiver, mock_serial):
+    """Turning off the main zone while no other zone is active stands by."""
+    # Fixture: main on, both zones off, chassis on.
+    mock_serial.written_data.clear()
+
+    await receiver.main.power_standby()
+
+    assert b"ZMOFF\r" in mock_serial.written_data
+    assert b"PWSTANDBY\r" in mock_serial.written_data
+
+
+async def test_zone_standby_skips_when_chassis_already_off(receiver, mock_serial):
+    """No system standby is sent when the chassis is already off."""
+    mock_serial.inject_response("ZMOFF")
+    mock_serial.inject_response("PWSTANDBY")
+    await asyncio.sleep(0.05)
+    mock_serial.written_data.clear()
+
+    await receiver.zone_2.power_standby()
+
+    assert b"Z2OFF\r" in mock_serial.written_data
+    assert b"PWSTANDBY\r" not in mock_serial.written_data
+
+
 # -- Query tests --
 
 

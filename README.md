@@ -259,6 +259,8 @@ Tuner band and mode are available via events (`state.tuner_band`, `state.tuner_m
 
 Zone 2 and Zone 3 can be controlled independently. Zone state (power, source, volume) is populated by `query_state()` and updated via events.
 
+`power_standby()` (on any zone or the main player) also puts the whole receiver into system standby when no other zone is left active. Some models (e.g. the AVR-2308) keep the chassis powered when only a secondary zone was switched on, so turning that zone off on its own would otherwise leave the unit running.
+
 ```python
 # Zone 2
 await receiver.zone_2.power_on()

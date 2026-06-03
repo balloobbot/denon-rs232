@@ -26,7 +26,7 @@ from .const import (
     _MULTI_RESPONSE_PREFIXES,
     _SINGLE_RESPONSE_PREFIXES,
 )
-from .players import MainPlayer, ZonePlayer
+from .players import MainPlayer, ZonePlayer, _BasePlayer
 from .protocol import (
     PendingQuery,
     _ZONE_VOL_RE,
@@ -141,6 +141,22 @@ class DenonReceiver:
     async def power_standby(self) -> None:
         """Put the receiver chassis in standby."""
         await self._send_command("PW", "STANDBY")
+
+    async def _standby_if_idle(self, just_turned_off: _BasePlayer) -> None:
+        """Put the whole receiver into standby if no zone remains active.
+
+        Called after a single zone/player is turned off. The just-turned-off
+        player is treated as off because its state still reflects the
+        pre-command value (the matching event is processed asynchronously).
+        If the chassis is still powered but every zone is now off, follow up
+        with a system standby command so the unit actually powers down.
+        """
+        if not self._state.power:
+            return
+        for player in (self.main, self.zone_2, self.zone_3):
+            if player is not just_turned_off and player.power:
+                return
+        await self.power_standby()
 
     async def query_power(self) -> bool:
         """Query the receiver chassis power state."""

@@ -74,11 +74,19 @@ class _BasePlayer:
         await self._receiver._send_command(self._power_command, "ON")
 
     async def power_standby(self) -> None:
-        """Turn this player off/standby."""
+        """Turn this player off/standby.
+
+        After the off command is sent, the receiver chassis is put into
+        system standby when no zone remains active. Some models (e.g. the
+        AVR-2308) keep the chassis powered when only a secondary zone was
+        switched on, so turning that zone off on its own would leave the
+        unit running and unable to be powered down.
+        """
         await self._receiver._send_command(
             self._power_command,
             self._power_standby_parameter,
         )
+        await self._receiver._standby_if_idle(self)
 
     async def select_input_source(self, source: InputSource) -> None:
         """Select an input source for this player."""

@@ -52,11 +52,15 @@ class DenonReceiver:
         port: str,
         zone3_prefix: str = ZONE3_PREFIX,
         model: ReceiverModel | None = None,
+        zone_half_db_volume_step: bool = True,
     ) -> None:
         self._port = port
         self._model = model
         self._zone3_prefix = (
             model.zone3_prefix or ZONE3_PREFIX if model else zone3_prefix
+        )
+        self._zone_half_db_volume_step = (
+            model.zone_half_db_volume_step if model else zone_half_db_volume_step
         )
         self._reader: asyncio.StreamReader | None = None
         self._writer: serialx.SerialStreamWriter | None = None
@@ -70,6 +74,7 @@ class DenonReceiver:
             power_standby_parameter="OFF",
             input_source_command="Z2",
             volume_command="Z2",
+            half_db_volume_step = self._zone_half_db_volume_step,
         )
         self.zone_3 = ZonePlayer(
             self,
@@ -78,6 +83,7 @@ class DenonReceiver:
             power_standby_parameter="OFF",
             input_source_command=self._zone3_prefix,
             volume_command=self._zone3_prefix,
+            half_db_volume_step = self._zone_half_db_volume_step,
         )
         self._subscribers: list[StateCallback] = []
         self._pending_queries: list[PendingQuery] = []

@@ -29,7 +29,10 @@ from denon_rs232 import (
     _parse_volume_param,
     _volume_to_param,
 )
-from denon_rs232.models import AVR_X2700H
+from denon_rs232.models import (
+    AVR_3805, 
+    AVR_X2700H,
+)
 
 
 # -- Master volume conversion tests --
@@ -85,6 +88,33 @@ def test_volume_to_param_half_db():
 
 def test_volume_to_param_half_db_negative():
     assert _volume_to_param(-0.5) == "795"
+
+
+def test_volume_to_param_zero_padding():
+    assert _volume_to_param(-78) == "02"
+
+
+def test_volume_to_param_zero_padding_half():
+    assert _volume_to_param(-78.5) == "015"
+
+
+def test_volume_to_param_half_step_on():
+    assert _volume_to_param(-30) == "50"
+    assert _volume_to_param(-30, half_step=True) == "50"
+    assert _volume_to_param(-29.5) == "505"
+    assert _volume_to_param(-29.5, half_step=True) == "505"
+
+
+def test_volume_to_param_half_step_off():
+    assert _volume_to_param(-30, half_step=False) == "50"
+    assert _volume_to_param(-29.5, half_step=False) == "50"
+    assert _volume_to_param(-29, half_step=False) == "51"
+    assert _volume_to_param(-28.6, half_step=False) == "51"
+    assert _volume_to_param(-28.5, half_step=False) == "51"
+    assert _volume_to_param(-28.4, half_step=False) == "51"
+    assert _volume_to_param(-0.5, half_step=False) == "79"
+    assert _volume_to_param(0.5, half_step=False) == "80"
+    assert _volume_to_param(-78.5, half_step=False) == "01"
 
 
 def test_volume_roundtrip():
@@ -611,6 +641,17 @@ async def test_zone2_set_volume(receiver, mock_serial):
     assert b"Z280\r" in mock_serial.written_data
 
 
+async def test_zone2_set_volume_no_half_db_steps(mock_serial):
+    """Receiver without support for setting the zone volume in half dB steps
+       shall only issue four character short zone commands."""
+    recv = await connect_with_defaults(mock_serial, model=AVR_3805)
+
+    await recv.zone_2.set_volume(-10.5)
+    assert b"Z269\r" in mock_serial.written_data
+
+    await recv.disconnect()
+
+
 # -- Zone 3 command tests (default Z3 prefix) --
 
 
@@ -637,6 +678,17 @@ async def test_zone3_select_input_source(receiver, mock_serial):
 async def test_zone3_set_volume(receiver, mock_serial):
     await receiver.zone_3.set_volume(-10.0)
     assert b"Z370\r" in mock_serial.written_data
+
+
+async def test_zone3_set_volume_no_half_db_steps(mock_serial):
+    """Receiver without support for setting the zone volume in half dB steps
+       shall only issue four character long zone commands."""
+    recv = await connect_with_defaults(mock_serial, model=AVR_3805)
+
+    await recv.zone_3.set_volume(-10.5)
+    assert b"Z169\r" in mock_serial.written_data
+
+    await recv.disconnect()
 
 
 # -- Query tests --

@@ -32,9 +32,6 @@ _SINGLE_RESPONSE_PREFIXES = (
 # Prefixes that return multiple responses to "?", state populated via _process_message.
 _MULTI_RESPONSE_PREFIXES = ("CV", "PS", "TM", "Z2", "Z1")
 
-# Prefixes a receiver in standby still answers. Every other query times out.
-_STANDBY_RESPONSE_PREFIXES = ("ZM",)
-
 # Zone 3 prefix: legacy models (AVR-3803/3805) use "Z1", modern models use "Z3".
 ZONE3_PREFIX = "Z3"
 

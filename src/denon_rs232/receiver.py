@@ -26,7 +26,6 @@ from .const import (
     ZONE3_PREFIX,
     _MULTI_RESPONSE_PREFIXES,
     _SINGLE_RESPONSE_PREFIXES,
-    _STANDBY_RESPONSE_PREFIXES,
 )
 from .players import MainPlayer, ZonePlayer
 from .protocol import (
@@ -163,9 +162,9 @@ class DenonReceiver:
     async def query_state(self) -> None:
         """Query all initial state from the receiver.
 
-        A receiver in standby answers almost nothing, so only the queries it
-        still responds to are sent. The rest would each cost a full
-        COMMAND_TIMEOUT and return nothing.
+        How much a receiver in standby answers differs per model, and every
+        unanswered query costs a full COMMAND_TIMEOUT. While in standby the
+        queries therefore stop at the first one that goes unanswered.
 
         Subscriber notifications are suppressed while the queries run and
         fired once at the end if any value changed.
@@ -188,25 +187,24 @@ class DenonReceiver:
             for prefix in _SINGLE_RESPONSE_PREFIXES:
                 if prefix == "PW" or prefix in unsupported_queries:
                     continue
-                if standby and prefix not in _STANDBY_RESPONSE_PREFIXES:
-                    continue
                 try:
                     await self._query(prefix)
                 except TimeoutError:
-                    pass
+                    if standby:
+                        break
 
-            if not standby:
-                for prefix in _MULTI_RESPONSE_PREFIXES:
-                    if prefix == "Z1":
-                        if self._model is not None and self._model.zone3_prefix is None:
-                            continue
-                        prefix = self._zone3_prefix
-
-                    if prefix in unsupported_queries:
+            # These are not waited on, so they stay worth sending in standby.
+            for prefix in _MULTI_RESPONSE_PREFIXES:
+                if prefix == "Z1":
+                    if self._model is not None and self._model.zone3_prefix is None:
                         continue
+                    prefix = self._zone3_prefix
 
-                    await self._send_command(prefix, "?")
-                    await asyncio.sleep(MULTI_RESPONSE_DELAY)
+                if prefix in unsupported_queries:
+                    continue
+
+                await self._send_command(prefix, "?")
+                await asyncio.sleep(MULTI_RESPONSE_DELAY)
         finally:
             self._batching = False
 

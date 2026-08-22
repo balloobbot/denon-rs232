@@ -355,8 +355,8 @@ async def test_query_state_skips_known_unsupported_model_queries(mock_serial):
     await recv.disconnect()
 
 
-async def test_query_state_skips_unanswerable_queries_in_standby(mock_serial):
-    """A receiver in standby should only be asked what it still answers."""
+async def test_query_state_stops_at_first_unanswered_query_in_standby(mock_serial):
+    """A receiver in standby should not be waited out query after query."""
     mock_serial._query_responses = {"PW": ["PWSTANDBY"], "ZM": ["ZMOFF"]}
     recv = DenonReceiver("/dev/ttyUSB0")
 
@@ -375,10 +375,47 @@ async def test_query_state_skips_unanswerable_queries_in_standby(mock_serial):
         for data in mock_serial.written_data
         if data.endswith(b"?\r")
     }
+    multi = {"Z3" if p == "Z1" else p for p in _MULTI_RESPONSE_PREFIXES}
 
-    assert sent_queries == {"PW", "ZM"}
+    # ZM answers, MV does not, so the queries after it are not attempted. The
+    # multi-response queries are not waited on and are always sent.
+    assert sent_queries == {"PW", "ZM", "MV"} | multi
     assert recv.power is False
     assert recv.main.power is False
+
+    await recv.disconnect()
+
+
+async def test_query_state_in_standby_continues_while_answered(mock_serial):
+    """A receiver that keeps answering in standby should be queried in full."""
+    mock_serial._query_responses = dict(DEFAULT_QUERY_RESPONSES) | {
+        "PW": ["PWSTANDBY"]
+    }
+    recv = DenonReceiver("/dev/ttyUSB0")
+
+    async def fake_open(*args, **kwargs):
+        return mock_serial.reader, mock_serial.writer
+
+    with patch(
+        "denon_rs232.receiver.serialx.open_serial_connection",
+        side_effect=fake_open,
+    ):
+        await recv.connect()
+        await recv.query_state()
+
+    sent_queries = {
+        data[:-1].decode("ascii").replace("?", "")
+        for data in mock_serial.written_data
+        if data.endswith(b"?\r")
+    }
+    expected = set(_SINGLE_RESPONSE_PREFIXES) | {
+        "Z3" if p == "Z1" else p for p in _MULTI_RESPONSE_PREFIXES
+    }
+
+    assert sent_queries == expected
+    assert recv.power is False
+    assert recv.main.input_source == InputSource.CD
+    assert recv.zone_2.power is False
 
     await recv.disconnect()
 

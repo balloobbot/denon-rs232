@@ -56,7 +56,7 @@ python -m denon_rs232 /dev/ttyUSB0 --zone3-prefix Z1
 
 `connect()` only opens and verifies the serial connection. Call `query_state()` when you want the current receiver state populated into the `state` property. After that, state is kept up to date via events from the receiver.
 
-A receiver in standby only answers a few queries, so `query_state()` skips the rest instead of waiting for each one to time out. The skipped queries are repeated automatically once the receiver reports that it left standby.
+How much a receiver in standby answers differs per model, so `query_state()` stops querying at the first unanswered query instead of waiting out the rest. The skipped queries are repeated automatically once the receiver reports that it left standby.
 
 Control lives on shared player objects:
 

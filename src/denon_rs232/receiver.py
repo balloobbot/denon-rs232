@@ -17,6 +17,7 @@ from .const import (
     InputSource,
     ModeSetting,
     MULTI_RESPONSE_DELAY,
+    POWER_ON_DELAY,
     PROBE_TIMEOUT,
     RoomEQ,
     SurroundBack,
@@ -65,6 +66,7 @@ class DenonReceiver:
         self._reader: asyncio.StreamReader | None = None
         self._writer: serialx.SerialStreamWriter | None = None
         self._read_task: asyncio.Task | None = None
+        self._power_on_task: asyncio.Task | None = None
         self._state = ReceiverState()
         self.main = MainPlayer(self, self._state.main_zone)
         self.zone_2 = ZonePlayer(
@@ -160,23 +162,38 @@ class DenonReceiver:
     async def query_state(self) -> None:
         """Query all initial state from the receiver.
 
+        How much a receiver in standby answers differs per model, and every
+        unanswered query costs a full COMMAND_TIMEOUT. While in standby the
+        queries therefore stop at the first one that goes unanswered.
+
         Subscriber notifications are suppressed while the queries run and
         fired once at the end if any value changed.
         """
         unsupported_queries = (
             self._model.unsupported_startup_queries if self._model is not None else ()
         )
+        self._cancel_power_on_query()
         self._batching = True
         self._batch_changed = False
         try:
+            # The known power state can be stale, so refresh it before deciding
+            # which queries the receiver is able to answer.
+            try:
+                await self._query("PW")
+            except TimeoutError:
+                pass
+            standby = self._state.power is False
+
             for prefix in _SINGLE_RESPONSE_PREFIXES:
                 if prefix == "PW" or prefix in unsupported_queries:
                     continue
                 try:
                     await self._query(prefix)
                 except TimeoutError:
-                    pass
+                    if standby:
+                        break
 
+            # These are not waited on, so they stay worth sending in standby.
             for prefix in _MULTI_RESPONSE_PREFIXES:
                 if prefix == "Z1":
                     if self._model is not None and self._model.zone3_prefix is None:
@@ -280,6 +297,37 @@ class DenonReceiver:
             if pending in self._pending_queries:
                 self._pending_queries.remove(pending)
 
+    def _schedule_power_on_query(self) -> None:
+        """Re-query state after the receiver leaves standby.
+
+        Queries skipped while it was in standby are only answerable now, and
+        the receiver needs a moment before it responds to them.
+        """
+        if self._power_on_task is not None and not self._power_on_task.done():
+            return
+        self._power_on_task = asyncio.create_task(self._delayed_query_state())
+
+    def _cancel_power_on_query(self) -> None:
+        """Drop a pending wake-up query.
+
+        The wake-up query itself calls query_state(), which cancels here in
+        turn, so the task must never cancel itself. The reference is kept
+        until then so a teardown can stop a wake-up query that is running.
+        """
+        if self._power_on_task is None:
+            return
+        if self._power_on_task is not asyncio.current_task():
+            self._power_on_task.cancel()
+        self._power_on_task = None
+
+    async def _delayed_query_state(self) -> None:
+        """Wait for the receiver to wake up, then query its state."""
+        await asyncio.sleep(POWER_ON_DELAY)
+        try:
+            await self.query_state()
+        except Exception:
+            _LOGGER.exception("Error querying state after power on")
+
     async def _teardown(self) -> None:
         """Tear down the connection after an error."""
         if not self._connected:
@@ -287,6 +335,8 @@ class DenonReceiver:
         self._connected = False
 
         current = asyncio.current_task()
+
+        self._cancel_power_on_query()
 
         if self._read_task is not None and self._read_task is not current:
             self._read_task.cancel()
@@ -367,7 +417,10 @@ class DenonReceiver:
 
         if prefix == "PW":
             if param == "ON":
+                was_standby = self._state.power is False
                 changed = self._set_attr_value(self._state, "power", True)
+                if was_standby and not self._batching:
+                    self._schedule_power_on_query()
             elif param == "STANDBY":
                 changed = self._set_attr_value(self._state, "power", False)
             else:

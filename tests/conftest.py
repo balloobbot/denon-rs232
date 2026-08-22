@@ -15,9 +15,11 @@ from denon_rs232.models import ReceiverModel
 denon_rs232.COMMAND_TIMEOUT = 0.1
 denon_rs232.MULTI_RESPONSE_DELAY = 0.01
 denon_rs232.PROBE_TIMEOUT = 0.01
+denon_rs232.POWER_ON_DELAY = 0.01
 denon_receiver.COMMAND_TIMEOUT = 0.1
 denon_receiver.MULTI_RESPONSE_DELAY = 0.01
 denon_receiver.PROBE_TIMEOUT = 0.01
+denon_receiver.POWER_ON_DELAY = 0.01
 
 # Default responses for all query prefixes during startup.
 DEFAULT_QUERY_RESPONSES: dict[str, list[str]] = {

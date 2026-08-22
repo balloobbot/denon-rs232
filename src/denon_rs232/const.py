@@ -6,6 +6,7 @@ BAUD_RATE = 9600
 COMMAND_TIMEOUT = 2.0  # seconds to wait for a response
 MULTI_RESPONSE_DELAY = 0.3  # seconds to wait for multi-response query results
 PROBE_TIMEOUT = 0.8  # seconds to wait for each probe attempt
+POWER_ON_DELAY = 3.0  # seconds a receiver needs after PW ON before it answers
 CR = b"\r"
 
 # Volume range constants (dB)

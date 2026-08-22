@@ -6,6 +6,7 @@ BAUD_RATE = 9600
 COMMAND_TIMEOUT = 2.0  # seconds to wait for a response
 MULTI_RESPONSE_DELAY = 0.3  # seconds to wait for multi-response query results
 PROBE_TIMEOUT = 0.8  # seconds to wait for each probe attempt
+POWER_ON_DELAY = 3.0  # seconds a receiver needs after PW ON before it answers
 CR = b"\r"
 
 # Volume range constants (dB)
@@ -30,6 +31,9 @@ _SINGLE_RESPONSE_PREFIXES = (
 
 # Prefixes that return multiple responses to "?", state populated via _process_message.
 _MULTI_RESPONSE_PREFIXES = ("CV", "PS", "TM", "Z2", "Z1")
+
+# Prefixes a receiver in standby still answers. Every other query times out.
+_STANDBY_RESPONSE_PREFIXES = ("ZM",)
 
 # Zone 3 prefix: legacy models (AVR-3803/3805) use "Z1", modern models use "Z3".
 ZONE3_PREFIX = "Z3"

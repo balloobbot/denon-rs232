@@ -355,6 +355,117 @@ async def test_query_state_skips_known_unsupported_model_queries(mock_serial):
     await recv.disconnect()
 
 
+async def test_query_state_skips_unanswerable_queries_in_standby(mock_serial):
+    """A receiver in standby should only be asked what it still answers."""
+    mock_serial._query_responses = {"PW": ["PWSTANDBY"], "ZM": ["ZMOFF"]}
+    recv = DenonReceiver("/dev/ttyUSB0")
+
+    async def fake_open(*args, **kwargs):
+        return mock_serial.reader, mock_serial.writer
+
+    with patch(
+        "denon_rs232.receiver.serialx.open_serial_connection",
+        side_effect=fake_open,
+    ):
+        await recv.connect()
+        await recv.query_state()
+
+    sent_queries = {
+        data[:-1].decode("ascii").replace("?", "")
+        for data in mock_serial.written_data
+        if data.endswith(b"?\r")
+    }
+
+    assert sent_queries == {"PW", "ZM"}
+    assert recv.power is False
+    assert recv.main.power is False
+
+    await recv.disconnect()
+
+
+async def test_query_state_rechecks_power_before_skipping(mock_serial):
+    """A receiver turned on since connect() should still be fully queried."""
+    mock_serial._query_responses = {"PW": ["PWSTANDBY"]}
+    recv = DenonReceiver("/dev/ttyUSB0")
+
+    async def fake_open(*args, **kwargs):
+        return mock_serial.reader, mock_serial.writer
+
+    with patch(
+        "denon_rs232.receiver.serialx.open_serial_connection",
+        side_effect=fake_open,
+    ):
+        await recv.connect()
+        assert recv.power is False
+
+        mock_serial._query_responses = dict(DEFAULT_QUERY_RESPONSES)
+        await recv.query_state()
+
+    sent_queries = {
+        data[:-1].decode("ascii").replace("?", "")
+        for data in mock_serial.written_data
+        if data.endswith(b"?\r")
+    }
+    expected = set(_SINGLE_RESPONSE_PREFIXES) | {
+        "Z3" if p == "Z1" else p for p in _MULTI_RESPONSE_PREFIXES
+    }
+
+    assert sent_queries == expected
+    assert recv.power is True
+    assert recv.main.input_source == InputSource.CD
+
+    await recv.disconnect()
+
+
+async def test_power_on_event_queries_withheld_state(mock_serial):
+    """A receiver leaving standby should be queried for what it withheld."""
+    mock_serial._query_responses = {"PW": ["PWSTANDBY"], "ZM": ["ZMOFF"]}
+    recv = DenonReceiver("/dev/ttyUSB0")
+
+    async def fake_open(*args, **kwargs):
+        return mock_serial.reader, mock_serial.writer
+
+    with patch(
+        "denon_rs232.receiver.serialx.open_serial_connection",
+        side_effect=fake_open,
+    ):
+        await recv.connect()
+        await recv.query_state()
+
+        mock_serial.written_data.clear()
+        mock_serial._query_responses = dict(DEFAULT_QUERY_RESPONSES)
+        mock_serial.inject_response("PWON")
+        await asyncio.sleep(0)
+
+        task = recv._power_on_task
+        assert task is not None
+        await task
+
+    sent_queries = {
+        data[:-1].decode("ascii").replace("?", "")
+        for data in mock_serial.written_data
+        if data.endswith(b"?\r")
+    }
+    expected = set(_SINGLE_RESPONSE_PREFIXES) | {
+        "Z3" if p == "Z1" else p for p in _MULTI_RESPONSE_PREFIXES
+    }
+
+    assert sent_queries == expected
+    assert recv.main.input_source == InputSource.CD
+    assert recv.zone_2.power is False
+
+    await recv.disconnect()
+
+
+async def test_power_query_at_startup_does_not_schedule_query(mock_serial):
+    """Querying a receiver that is already on should not trigger a re-query."""
+    recv = await connect_with_defaults(mock_serial)
+
+    assert recv._power_on_task is None
+
+    await recv.disconnect()
+
+
 async def test_connect_timeout_raises():
     recv = DenonReceiver("/dev/ttyUSB0")
     mock = MockSerialConnection()

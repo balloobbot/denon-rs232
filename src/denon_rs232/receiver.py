@@ -308,7 +308,12 @@ class DenonReceiver:
         self._power_on_task = asyncio.create_task(self._delayed_query_state())
 
     def _cancel_power_on_query(self) -> None:
-        """Drop a pending wake-up query."""
+        """Drop a pending wake-up query.
+
+        The wake-up query itself calls query_state(), which cancels here in
+        turn, so the task must never cancel itself. The reference is kept
+        until then so a teardown can stop a wake-up query that is running.
+        """
         if self._power_on_task is None:
             return
         if self._power_on_task is not asyncio.current_task():

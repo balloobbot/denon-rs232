@@ -96,7 +96,9 @@ class DenonReceiver:
         self._pending_queries: list[PendingQuery] = []
         self._write_lock = asyncio.Lock()
         self._connected = False
-        self._batching = False
+        # Number of query_state() calls running. A wake-up query can still be
+        # running when another query_state() starts.
+        self._batching = 0
         self._batch_changed = False
 
     @property
@@ -151,15 +153,16 @@ class DenonReceiver:
             await self.query_power()
         except TimeoutError:
             await self.disconnect()
+            # An ESPHome proxy URL can carry its API key in the query string.
             raise ConnectionError(
-                f"No response from receiver on {self._port}"
+                f"No response from receiver on {self._port.split('?', 1)[0]}"
             ) from None
         except BaseException:
             # Also on cancellation, so that the port is not left open.
             await self._teardown()
             raise
 
-        _LOGGER.info("Connected to Denon receiver on %s", self._port)
+        _LOGGER.info("Connected to Denon receiver on %s", self._port.split("?", 1)[0])
 
     async def disconnect(self) -> None:
         """Close the serial connection."""
@@ -197,8 +200,7 @@ class DenonReceiver:
             self._model.unsupported_startup_queries if self._model is not None else ()
         )
         self._cancel_power_on_query()
-        self._batching = True
-        self._batch_changed = False
+        self._batching += 1
         try:
             # The known power state can be stale, so refresh it before deciding
             # which queries the receiver is able to answer.
@@ -230,9 +232,11 @@ class DenonReceiver:
                 await self._send_command(prefix, "?")
                 await asyncio.sleep(MULTI_RESPONSE_DELAY)
         finally:
-            self._batching = False
+            self._batching -= 1
 
-        if self._batch_changed:
+        # Overlapping calls report their changes once, when the last one ends.
+        if not self._batching and self._batch_changed:
+            self._batch_changed = False
             self._notify_subscribers()
 
     async def probe_sources(

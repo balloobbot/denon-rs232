@@ -495,6 +495,32 @@ async def test_power_on_event_queries_withheld_state(mock_serial):
     await recv.disconnect()
 
 
+async def test_overlapping_query_state_reports_changes(receiver, mock_serial):
+    """Changes found by a running wake-up query still reach subscribers."""
+    states: list[ReceiverState | None] = []
+    receiver.subscribe(states.append)
+    mock_serial._query_responses = dict(DEFAULT_QUERY_RESPONSES) | {
+        "MV": ["MV50"],
+        "MU": ["MUON"],
+    }
+    receiver._state.power = False
+    mock_serial.inject_response("PWON")
+
+    while (wake_up := receiver._power_on_task) is None:
+        await asyncio.sleep(0.001)
+    # Wait until the wake-up query has found the changes, but not finished.
+    while receiver.main.volume != -30:
+        await asyncio.sleep(0.001)
+    assert not wake_up.done()
+
+    await receiver.query_state()
+    await wake_up
+
+    assert states[-1] is not None
+    assert states[-1].main_zone.volume == -30
+    assert states[-1].main_zone.mute is True
+
+
 async def test_power_query_at_startup_does_not_schedule_query(mock_serial):
     """Querying a receiver that is already on should not trigger a re-query."""
     recv = await connect_with_defaults(mock_serial)
@@ -518,6 +544,45 @@ async def test_connect_timeout_raises():
     ):
         with pytest.raises(ConnectionError, match="No response"):
             await recv.connect()
+
+
+async def test_connect_does_not_log_api_key(mock_serial, caplog):
+    mock_serial._query_responses = dict(DEFAULT_QUERY_RESPONSES)
+    recv = DenonReceiver("esphome://192.168.1.2/?port_name=TTL&key=SECRET")
+
+    async def fake_open(*args, **kwargs):
+        return mock_serial.reader, mock_serial.writer
+
+    caplog.set_level("INFO")
+    with patch(
+        "denon_rs232.receiver.serialx.open_serial_connection",
+        side_effect=fake_open,
+    ):
+        await recv.connect()
+    await recv.disconnect()
+
+    assert "esphome://192.168.1.2/" in caplog.text
+    assert "SECRET" not in caplog.text
+
+
+async def test_connect_timeout_hides_api_key():
+    recv = DenonReceiver("esphome://192.168.1.2/?port_name=TTL&key=SECRET")
+    mock = MockSerialConnection()
+
+    async def fake_open(*args, **kwargs):
+        return mock.reader, mock.writer
+
+    with (
+        patch(
+            "denon_rs232.receiver.serialx.open_serial_connection",
+            side_effect=fake_open,
+        ),
+        pytest.raises(ConnectionError, match="No response") as exc_info,
+    ):
+        await recv.connect()
+
+    assert "esphome://192.168.1.2/" in str(exc_info.value)
+    assert "SECRET" not in str(exc_info.value)
 
 
 async def test_disconnect(receiver):

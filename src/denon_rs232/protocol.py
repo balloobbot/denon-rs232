@@ -57,3 +57,5 @@ class PendingQuery:
 
     prefix: str
     future: asyncio.Future[str]
+    #: The parameters the response may carry, or None to accept any.
+    params: tuple[str, ...] | None = None

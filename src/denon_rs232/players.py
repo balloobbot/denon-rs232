@@ -106,7 +106,10 @@ class _BasePlayer:
 
     async def query_power(self) -> bool:
         """Query the power state."""
-        resp = await self._receiver._query(self._power_command)
+        # Zones answer with their source and volume too, under the same prefix.
+        resp = await self._receiver._query(
+            self._power_command, ("ON", self._power_standby_parameter)
+        )
         return resp == "ON"
 
 

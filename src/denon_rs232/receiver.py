@@ -131,11 +131,12 @@ class DenonReceiver:
             await self.query_power()
         except TimeoutError:
             await self.disconnect()
+            # An ESPHome proxy URL can carry its API key in the query string.
             raise ConnectionError(
-                f"No response from receiver on {self._port}"
+                f"No response from receiver on {self._port.split('?', 1)[0]}"
             ) from None
 
-        _LOGGER.info("Connected to Denon receiver on %s", self._port)
+        _LOGGER.info("Connected to Denon receiver on %s", self._port.split("?", 1)[0])
 
     async def disconnect(self) -> None:
         """Close the serial connection."""

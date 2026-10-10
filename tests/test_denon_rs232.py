@@ -520,6 +520,45 @@ async def test_connect_timeout_raises():
             await recv.connect()
 
 
+async def test_connect_does_not_log_api_key(mock_serial, caplog):
+    mock_serial._query_responses = dict(DEFAULT_QUERY_RESPONSES)
+    recv = DenonReceiver("esphome://192.168.1.2/?port_name=TTL&key=SECRET")
+
+    async def fake_open(*args, **kwargs):
+        return mock_serial.reader, mock_serial.writer
+
+    caplog.set_level("INFO")
+    with patch(
+        "denon_rs232.receiver.serialx.open_serial_connection",
+        side_effect=fake_open,
+    ):
+        await recv.connect()
+    await recv.disconnect()
+
+    assert "esphome://192.168.1.2/" in caplog.text
+    assert "SECRET" not in caplog.text
+
+
+async def test_connect_timeout_hides_api_key():
+    recv = DenonReceiver("esphome://192.168.1.2/?port_name=TTL&key=SECRET")
+    mock = MockSerialConnection()
+
+    async def fake_open(*args, **kwargs):
+        return mock.reader, mock.writer
+
+    with (
+        patch(
+            "denon_rs232.receiver.serialx.open_serial_connection",
+            side_effect=fake_open,
+        ),
+        pytest.raises(ConnectionError, match="No response") as exc_info,
+    ):
+        await recv.connect()
+
+    assert "esphome://192.168.1.2/" in str(exc_info.value)
+    assert "SECRET" not in str(exc_info.value)
+
+
 async def test_disconnect(receiver):
     await receiver.disconnect()
     assert not receiver.connected

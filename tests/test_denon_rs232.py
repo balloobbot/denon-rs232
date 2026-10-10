@@ -495,6 +495,32 @@ async def test_power_on_event_queries_withheld_state(mock_serial):
     await recv.disconnect()
 
 
+async def test_overlapping_query_state_reports_changes(receiver, mock_serial):
+    """Changes found by a running wake-up query still reach subscribers."""
+    states: list[ReceiverState | None] = []
+    receiver.subscribe(states.append)
+    mock_serial._query_responses = dict(DEFAULT_QUERY_RESPONSES) | {
+        "MV": ["MV50"],
+        "MU": ["MUON"],
+    }
+    receiver._state.power = False
+    mock_serial.inject_response("PWON")
+
+    while (wake_up := receiver._power_on_task) is None:
+        await asyncio.sleep(0.001)
+    # Wait until the wake-up query has found the changes, but not finished.
+    while receiver.main.volume != -30:
+        await asyncio.sleep(0.001)
+    assert not wake_up.done()
+
+    await receiver.query_state()
+    await wake_up
+
+    assert states[-1] is not None
+    assert states[-1].main_zone.volume == -30
+    assert states[-1].main_zone.mute is True
+
+
 async def test_power_query_at_startup_does_not_schedule_query(mock_serial):
     """Querying a receiver that is already on should not trigger a re-query."""
     recv = await connect_with_defaults(mock_serial)

@@ -355,8 +355,9 @@ Available models:
 The library handles connection errors gracefully:
 
 - If the receiver doesn't respond during `connect()`, a `ConnectionError` is raised.
-- If the serial connection is lost (cable unplugged, device error), subscribers receive `None` and `connected` becomes `False`.
-- Write errors during commands propagate the exception and tear down the connection.
+- If the serial connection is lost (cable unplugged, device error), subscribers receive `None` and `connected` becomes `False`. Queries that wait for a response fail with `DenonConnectionError`.
+- Write errors during commands tear down the connection and raise `DenonConnectionError`. Commands sent while not connected raise it too. `DenonConnectionError` is a `ConnectionError`.
+- `connect()` raises `RuntimeError` when already connected. Call `disconnect()` first to reconnect.
 
 ```python
 try:

@@ -28,13 +28,14 @@ from .protocol import (
     parse_volume_param as _parse_volume_param,
     volume_to_param as _volume_to_param,
 )
-from .receiver import DenonReceiver, StateCallback
+from .receiver import DenonConnectionError, DenonReceiver, StateCallback
 from .state import MainZoneState, ReceiverState, ZoneState
 
 __all__ = [
     "BAUD_RATE",
     "COMMAND_TIMEOUT",
     "CR",
+    "DenonConnectionError",
     "DenonPlayer",
     "DenonReceiver",
     "DigitalInputMode",

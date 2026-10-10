@@ -14,6 +14,7 @@ from conftest import (
 from denon_rs232 import (
     _MULTI_RESPONSE_PREFIXES,
     _SINGLE_RESPONSE_PREFIXES,
+    DenonConnectionError,
     DenonReceiver,
     MainZoneState,
     ReceiverState,
@@ -1482,6 +1483,36 @@ async def test_unsubscribe(receiver, mock_serial):
     assert len(states) == 0
 
 
+async def test_unsubscribe_twice_is_noop(receiver, mock_serial):
+    states: list[ReceiverState] = []
+    unsub = receiver.subscribe(lambda s: states.append(s))
+
+    unsub()
+    unsub()
+
+    mock_serial.inject_response("MV75")
+    await asyncio.sleep(0.1)
+
+    assert len(states) == 0
+
+
+async def test_unsubscribe_while_notified(receiver, mock_serial):
+    """A subscriber that unsubscribes itself must not skip the next one."""
+    calls: list[str] = []
+
+    def first(state):
+        calls.append("first")
+        unsub_first()
+
+    unsub_first = receiver.subscribe(first)
+    receiver.subscribe(lambda state: calls.append("second"))
+
+    mock_serial.inject_response("MV75")
+    await asyncio.sleep(0.1)
+
+    assert calls == ["first", "second"]
+
+
 async def test_power_event(receiver, mock_serial):
     states: list[ReceiverState] = []
     receiver.subscribe(lambda s: states.append(s))
@@ -1690,3 +1721,169 @@ async def test_disconnect_notifies_none(receiver, mock_serial):
     await receiver.disconnect()
 
     assert states[-1] is None
+
+
+def _break_transport(mock: MockSerialConnection) -> OSError:
+    """Make the mock transport behave like a serial link that has gone away.
+
+    Writes fail, and so does ``wait_closed()``: serialx re-raises the error
+    that broke the connection when the stream is closed afterwards.
+    """
+    err = OSError(5, "ESPHome API connection closed")
+    mock.writer.write.side_effect = err
+    mock.writer.wait_closed.side_effect = err
+    return err
+
+
+async def test_write_error_on_broken_transport_tears_down(receiver, mock_serial):
+    """A transport that also fails on close must not leave a dead writer behind."""
+    states = []
+    receiver.subscribe(states.append)
+    err = _break_transport(mock_serial)
+
+    with pytest.raises(DenonConnectionError) as exc_info:
+        await receiver.power_on()
+
+    assert exc_info.value.__cause__ is err
+    assert not receiver.connected
+    assert receiver._writer is None
+    assert receiver._reader is None
+    assert receiver._read_task is None
+    assert states == [None]
+
+    # Later commands fail fast instead of writing to the dead stream again.
+    mock_serial.writer.write.reset_mock()
+    with pytest.raises(DenonConnectionError, match="Not connected"):
+        await receiver.power_on()
+    with pytest.raises(DenonConnectionError, match="Not connected"):
+        await receiver.query_power()
+    mock_serial.writer.write.assert_not_called()
+
+
+async def test_read_error_on_broken_transport_tears_down(receiver, mock_serial):
+    """The read loop must finish cleanly even when closing the transport fails."""
+    states = []
+    receiver.subscribe(states.append)
+    read_task = receiver._read_task
+    assert read_task is not None
+    err = _break_transport(mock_serial)
+
+    mock_serial.reader.set_exception(err)
+    # Raised out of the task before the fix.
+    await read_task
+
+    assert not receiver.connected
+    assert receiver._writer is None
+    assert states == [None]
+    with pytest.raises(DenonConnectionError, match="Not connected"):
+        await receiver.power_on()
+
+
+async def test_reconnect_after_broken_transport(receiver, mock_serial):
+    """After a broken link is torn down, connect() brings the receiver back."""
+    _break_transport(mock_serial)
+    with pytest.raises(DenonConnectionError):
+        await receiver.power_on()
+    assert not receiver.connected
+
+    fresh = MockSerialConnection()
+    fresh._query_responses = dict(DEFAULT_QUERY_RESPONSES)
+
+    async def fake_open(*args, **kwargs):
+        return fresh.reader, fresh.writer
+
+    with patch(
+        "denon_rs232.receiver.serialx.open_serial_connection",
+        side_effect=fake_open,
+    ):
+        await receiver.connect()
+
+    assert receiver.connected
+    await receiver.power_on()
+    assert fresh.written_data[-1] == b"PWON\r"
+
+
+async def test_link_loss_fails_query_in_flight(receiver, mock_serial):
+    """A dropped link fails the pending query instead of timing out."""
+    mock_serial._query_responses.clear()
+    asyncio.get_running_loop().call_later(0.01, mock_serial.reader.feed_eof)
+
+    with pytest.raises(DenonConnectionError, match="Connection lost"):
+        async with asyncio.timeout(0.05):
+            await receiver.main.query_volume()
+
+    assert not receiver.connected
+
+
+async def test_connect_when_connected_raises(receiver, mock_serial):
+    """A second connect() must not replace and leak the open connection."""
+    with (
+        patch("denon_rs232.receiver.serialx.open_serial_connection") as mock_open,
+        pytest.raises(RuntimeError, match="Already connected"),
+    ):
+        await receiver.connect()
+
+    mock_open.assert_not_called()
+    mock_serial.writer.close.assert_not_called()
+    assert receiver.connected
+    await receiver.power_on()
+
+
+async def test_connect_error_tears_down():
+    """An unexpected error while verifying the connection closes it."""
+    recv = DenonReceiver("/dev/ttyUSB0")
+    mock = MockSerialConnection()
+    mock._query_responses = {"PW": ["PWOFF"]}
+
+    async def fake_open(*args, **kwargs):
+        return mock.reader, mock.writer
+
+    with (
+        patch(
+            "denon_rs232.receiver.serialx.open_serial_connection",
+            side_effect=fake_open,
+        ),
+        pytest.raises(ValueError, match="Unknown power state"),
+    ):
+        await recv.connect()
+
+    assert not recv.connected
+    assert recv._read_task is None
+    mock.writer.close.assert_called_once()
+
+
+async def test_connect_cancelled_tears_down():
+    """A connect() cancelled while verifying the connection closes it."""
+    recv = DenonReceiver("/dev/ttyUSB0")
+    mock = MockSerialConnection()
+    # No auto-responses: the power query waits until it is cancelled.
+
+    async def fake_open(*args, **kwargs):
+        return mock.reader, mock.writer
+
+    with (
+        patch(
+            "denon_rs232.receiver.serialx.open_serial_connection",
+            side_effect=fake_open,
+        ),
+        pytest.raises(TimeoutError),
+    ):
+        async with asyncio.timeout(0.01):
+            await recv.connect()
+
+    assert not recv.connected
+    assert recv._read_task is None
+    mock.writer.close.assert_called_once()
+
+
+async def test_read_loop_crash_tears_down(receiver, mock_serial, caplog):
+    """An unexpected error in the read loop disconnects instead of hanging."""
+    disconnected = asyncio.Event()
+    receiver.subscribe(lambda state: state is None and disconnected.set())
+
+    with patch.object(receiver, "_process_message", side_effect=RuntimeError("boom")):
+        mock_serial.inject_response("MV75")
+        await disconnected.wait()
+
+    assert not receiver.connected
+    assert "Read loop failed" in caplog.text

@@ -302,11 +302,14 @@ class DenonReceiver:
             await self._teardown()
             raise DenonConnectionError(f"Error writing to serial port: {err}") from err
 
-    async def _query(self, command: str) -> str:
-        """Send a query and wait for the response."""
+    async def _query(self, command: str, params: tuple[str, ...] | None = None) -> str:
+        """Send a query and wait for the response.
+
+        If ``params`` is given, responses with another parameter are ignored.
+        """
         loop = asyncio.get_running_loop()
         future: asyncio.Future[str] = loop.create_future()
-        pending = PendingQuery(prefix=command, future=future)
+        pending = PendingQuery(prefix=command, future=future, params=params)
         self._pending_queries.append(pending)
 
         try:
@@ -579,7 +582,11 @@ class DenonReceiver:
             changed = self._process_zone_param(self._state.zone_3, param)
 
         for pending in list(self._pending_queries):
-            if pending.prefix == prefix and not pending.future.done():
+            if (
+                pending.prefix == prefix
+                and (pending.params is None or param in pending.params)
+                and not pending.future.done()
+            ):
                 pending.future.set_result(param)
 
         if changed:

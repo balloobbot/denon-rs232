@@ -956,6 +956,19 @@ async def test_query_main_power(receiver, mock_serial):
     assert result is True
 
 
+async def test_query_zone_power_ignores_other_zone_replies(receiver, mock_serial):
+    """A zone's volume or source reply must not answer its power query."""
+    mock_serial._query_responses = {"Z2": ["Z250", "Z2CD", "Z2ON"]}
+
+    assert await receiver.zone_2.query_power() is True
+
+
+async def test_query_zone_power_off(receiver, mock_serial):
+    mock_serial._query_responses = {"Z3": ["Z3CD", "Z3OFF"]}
+
+    assert await receiver.zone_3.query_power() is False
+
+
 async def test_query_input_source(receiver, mock_serial):
     async def respond():
         await asyncio.sleep(0.05)
